@@ -121,50 +121,58 @@ SAMPLE_TEXT = (
 )
 
 # ── Hàm xử lý tạo giọng nói ────────────────────────────────────────────────
-def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature):
+def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature, progress=gr.Progress(track_tqdm=True)):
     text = (text or "").strip()
     if not text:
-        raise gr.Error("⚠️ Vui lòng nhập nội dung văn bản cần đọc!")
+        return None, "⚠️ **Vui lòng nhập nội dung văn bản cần đọc!**"
 
-    engine, sr = get_tts()
+    progress(0.1, desc="⏳ Đang chuẩn bị mô hình AI...")
+    try:
+        engine, sr = get_tts()
+    except Exception as e:
+        return None, f"❌ **Không thể khởi động mô hình AI:** {e}"
+
     if engine is None:
-        raise gr.Error("❌ Không thể khởi tạo mô hình AI trên server!")
+        return None, "❌ **Lỗi:** Không thể nạp mô hình AI trên máy chủ!"
 
     start_time = time.perf_counter()
 
     if mode == "preset":
         if not preset_voice_display or "Không tìm thấy" in preset_voice_display:
-            raise gr.Error("⚠️ Vui lòng chọn một giọng đọc hợp lệ trong danh sách!")
+            return None, "⚠️ **Vui lòng chọn một giọng đọc hợp lệ trong danh sách!**"
         
         actual_voice_name = VOICE_MAP.get(preset_voice_display, preset_voice_display.split(" — ")[0].strip())
         if actual_voice_name in ["Adam bựa", "Adam"]:
             actual_voice_name = "Adam"
             
+        progress(0.4, desc=f"🎙️ Đang tổng hợp giọng {actual_voice_name}...")
         print(f"🎙️ Đang tổng hợp giọng: {actual_voice_name} ({preset_voice_display})", flush=True)
         try:
             audio = engine.infer(text, voice=actual_voice_name, temperature=float(temperature))
         except Exception as e:
             print(f"❌ Lỗi tổng hợp giọng: {e}", flush=True)
-            raise gr.Error(f"❌ Lỗi tạo giọng: {e}")
+            return None, f"❌ **Lỗi khi tạo giọng:** {e}"
             
         info_source = f"Giọng chuẩn VieNeu: **{actual_voice_name}**"
     else:
         if not custom_voice_file or "Chưa có file" in custom_voice_file:
-            raise gr.Error("⚠️ Thư mục 'voices/' chưa có file .wav nào! Hãy tải file .wav lên repo.")
+            return None, "⚠️ **Chưa có file âm thanh mẫu nào trong thư mục 'voices/'!**"
 
         ref_path = os.path.join(VOICES_DIR, custom_voice_file)
         if not os.path.exists(ref_path):
-            raise gr.Error(f"⚠️ Không tìm thấy file âm thanh: {custom_voice_file}")
+            return None, f"⚠️ **Không tìm thấy file âm thanh:** {custom_voice_file}"
 
+        progress(0.4, desc="🎙️ Đang phân tích file mẫu và clone giọng...")
         print(f"🎙️ Đang clone chất giọng từ file: {ref_path}", flush=True)
         try:
             audio = engine.infer(text, ref_audio=ref_path, temperature=float(temperature))
         except Exception as e:
             print(f"❌ Lỗi clone giọng: {e}", flush=True)
-            raise gr.Error(f"❌ Lỗi clone giọng từ file: {e}")
+            return None, f"❌ **Lỗi khi clone giọng từ file:** {e}"
             
         info_source = f"Clone từ file server: **{custom_voice_file}**"
 
+    progress(0.85, desc="🎧 Đang xuất và lưu file âm thanh...")
     elapsed = time.perf_counter() - start_time
     audio_data = np.asarray(audio, dtype=np.float32)
     duration = len(audio_data) / sr if sr else 0.0
@@ -177,6 +185,7 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
 
     gc.collect()
 
+    progress(1.0, desc="✅ Hoàn tất!")
     stats = (
         f"✅ **Đã tạo giọng nói thành công!**\n\n"
         f"• **Nguồn giọng:** {info_source}\n"
@@ -640,6 +649,18 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     is_render = "RENDER" in os.environ or "PORT" in os.environ
     
+    # Nạp sẵn mô hình trong luồng nền để khi người dùng bấm là có ngay
+    import threading
+    def prewarm_in_background():
+        try:
+            time.sleep(2)
+            print("🔥 Bắt đầu nạp sẵn mô hình AI trong luồng nền...", flush=True)
+            get_tts()
+            print("🔥 Nạp sẵn mô hình hoàn tất! Sẵn sàng phục vụ tức thì.", flush=True)
+        except Exception as e:
+            print(f"Lỗi nạp nền: {e}", flush=True)
+    threading.Thread(target=prewarm_in_background, daemon=True).start()
+
     launch_res = demo.queue().launch(
         share=not is_render,
         server_name="0.0.0.0",

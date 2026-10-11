@@ -2,7 +2,7 @@ services:
   - type: web
     name: vietneu-studio
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python -c "from vieneu import Vieneu; Vieneu(mode='v3nano')"
     startCommand: python app.py
     envVars:
       - key: PYTHON_VERSION
