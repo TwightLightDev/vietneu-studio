@@ -56,19 +56,19 @@ OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(VOICES_DIR, exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
-# Danh sách 11 giọng chuẩn của VieNeu v3nano (Đầy đủ Nam, Nữ, Bắc, Nam, Trung)
+# Danh sách 11 giọng chuẩn chính xác của VieNeu v3nano
 ALL_PRESET_VOICES = [
-    {"display": "Adam bựa — Nam · Bắc · Phong cách tự nhiên ⭐", "name": "Adam bựa"},
-    {"display": "Minh Quân Pro — Nam · Nam · Giọng đọc truyền cảm", "name": "Minh Quân Pro"},
+    {"display": "Adam — Nam · Bắc · Phong cách tự nhiên ⭐", "name": "Adam"},
     {"display": "Mai Anh — Nữ · Bắc · Phong cách nhẹ nhàng", "name": "Mai Anh"},
     {"display": "Trúc Ly — Nữ · Nam · Giọng đọc tự nhiên", "name": "Trúc Ly"},
     {"display": "Anh Khôi — Nam · Nam · Phong cách trẻ trung", "name": "Anh Khôi"},
-    {"display": "Thùy Dung — Nữ · Bắc · Giọng đọc tin tức", "name": "Thùy Dung"},
-    {"display": "Minh Đức — Nam · Bắc · Giọng đọc trầm ấm", "name": "Minh Đức"},
-    {"display": "Ngọc Huyền — Nữ · Bắc · Phong cách ngọt ngào", "name": "Ngọc Huyền"},
-    {"display": "Quang Sơn — Nam · Trung · Phong cách tự nhiên", "name": "Quang Sơn"},
-    {"display": "Ngọc Trân — Nữ · Nam · Giọng đọc truyền hình", "name": "Ngọc Trân"},
-    {"display": "Thiền Tâm Đức — Nam · Trầm ấm · Kể chuyện thiền", "name": "Thiền Tâm Đức"},
+    {"display": "Minh Quân — Nam · Nam · Giọng đọc truyền cảm", "name": "Minh Quân"},
+    {"display": "Ái Hân — Nữ · Nam · Giọng đọc diễn cảm", "name": "Ái Hân"},
+    {"display": "Mỹ Duyên — Nữ · Nam · Giọng đọc dịu dàng", "name": "Mỹ Duyên"},
+    {"display": "Đức Trí — Nam · Bắc · Phong cách trầm ấm", "name": "Đức Trí"},
+    {"display": "Hữu Quân — Nam · Bắc · Phong cách đĩnh đạc", "name": "Hữu Quân"},
+    {"display": "Xuân Tiên — Nữ · Trung · Phong cách tự nhiên", "name": "Xuân Tiên"},
+    {"display": "Mạnh Dũng — Nam · Bắc · Giọng đọc tin tức", "name": "Mạnh Dũng"},
 ]
 
 VOICE_MAP = {v["display"]: v["name"] for v in ALL_PRESET_VOICES}
@@ -137,8 +137,16 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
             raise gr.Error("⚠️ Vui lòng chọn một giọng đọc hợp lệ trong danh sách!")
         
         actual_voice_name = VOICE_MAP.get(preset_voice_display, preset_voice_display.split(" — ")[0].strip())
+        if actual_voice_name in ["Adam bựa", "Adam"]:
+            actual_voice_name = "Adam"
+            
         print(f"🎙️ Đang tổng hợp giọng: {actual_voice_name} ({preset_voice_display})", flush=True)
-        audio = engine.infer(text, voice=actual_voice_name, temperature=float(temperature))
+        try:
+            audio = engine.infer(text, voice=actual_voice_name, temperature=float(temperature))
+        except Exception as e:
+            print(f"❌ Lỗi tổng hợp giọng: {e}", flush=True)
+            raise gr.Error(f"❌ Lỗi tạo giọng: {e}")
+            
         info_source = f"Giọng chuẩn VieNeu: **{actual_voice_name}**"
     else:
         if not custom_voice_file or "Chưa có file" in custom_voice_file:
@@ -149,7 +157,12 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
             raise gr.Error(f"⚠️ Không tìm thấy file âm thanh: {custom_voice_file}")
 
         print(f"🎙️ Đang clone chất giọng từ file: {ref_path}", flush=True)
-        audio = engine.infer(text, ref_audio=ref_path, temperature=float(temperature))
+        try:
+            audio = engine.infer(text, ref_audio=ref_path, temperature=float(temperature))
+        except Exception as e:
+            print(f"❌ Lỗi clone giọng: {e}", flush=True)
+            raise gr.Error(f"❌ Lỗi clone giọng từ file: {e}")
+            
         info_source = f"Clone từ file server: **{custom_voice_file}**"
 
     elapsed = time.perf_counter() - start_time
