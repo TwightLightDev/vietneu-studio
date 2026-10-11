@@ -1,0 +1,4 @@
+vieneu
+soundfile
+numpy
+gradio>=4.0.0

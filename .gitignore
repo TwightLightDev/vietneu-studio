@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.gradio/
+urls.txt
+.env
+venv/
+.venv/
