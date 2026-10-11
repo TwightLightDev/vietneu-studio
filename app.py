@@ -2,9 +2,14 @@ import os
 import sys
 import socket
 
-# Đảm bảo mã hóa UTF-8 trên Windows console và tắt cảnh báo symlinks
+# Tối ưu hóa cực hạn bộ nhớ cho Cloud 512MB RAM
 os.environ["PYTHONIOENCODING"] = "utf-8"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["ORT_DISABLE_MEMORY_ARENA"] = "1"
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -13,61 +18,60 @@ if sys.platform == "win32":
         pass
 
 import time
+import gc
 import numpy as np
 import soundfile as sf
 import gradio as gr
 from vieneu import Vieneu
 
-# ── Khởi tạo mô hình VieNeu-TTS (ONNX Runtime CPU) ─────────────────────────
-print("⏳ Đang nạp mô hình VieNeu-TTS (sử dụng CPU / ONNX Runtime)...", flush=True)
-try:
-    try:
-        # int8 giúp giảm 4x dung lượng RAM và tăng tốc độ xử lý trên CPU Cloud
-        tts = Vieneu(precision="int8")
-        print("💡 Đang chạy với chế độ tối ưu bộ nhớ precision=int8", flush=True)
-    except Exception:
-        tts = Vieneu()
-    SR = getattr(tts, "sample_rate", 48000)
-    print(f"✅ Mô hình đã sẵn sàng! Tần số mẫu: {SR} Hz", flush=True)
-except Exception as e:
-    print(f"❌ Lỗi khởi tạo mô hình: {e}", flush=True)
-    tts = None
-    SR = 48000
+# ── Khởi tạo mô hình VieNeu-TTS (Lazy Load + v3nano cho Cloud 512MB) ────────
+_tts_instance = None
+_tts_sr = 24000
+
+def get_tts():
+    global _tts_instance, _tts_sr
+    if _tts_instance is None:
+        print("⏳ Đang nạp mô hình VieNeu-TTS v3nano siêu nhẹ cho Cloud...", flush=True)
+        gc.collect()
+        try:
+            # v3nano: 48M tham số, chỉ chiếm ~100MB RAM, chạy cực êm trên Render Free 512MB
+            _tts_instance = Vieneu(mode="v3nano")
+            _tts_sr = getattr(_tts_instance, "sample_rate", 24000)
+            print(f"✅ Mô hình v3nano đã sẵn sàng! Tần số: {_tts_sr} Hz", flush=True)
+        except Exception as e:
+            print(f"⚠️ Thử khởi tạo với precision=int8: {e}", flush=True)
+            try:
+                _tts_instance = Vieneu(precision="int8")
+                _tts_sr = getattr(_tts_instance, "sample_rate", 48000)
+            except Exception as e2:
+                print(f"⚠️ Thử khởi tạo mặc định: {e2}", flush=True)
+                _tts_instance = Vieneu()
+                _tts_sr = getattr(_tts_instance, "sample_rate", 48000)
+    return _tts_instance, _tts_sr
 
 # ── Quản lý thư mục file giọng mẫu trên server ─────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VOICES_DIR = os.path.join(BASE_DIR, "voices")
 os.makedirs(VOICES_DIR, exist_ok=True)
 
-# Lấy danh sách toàn bộ 25 giọng chuẩn mặc định của VieNeu
-def get_all_preset_voices():
-    if tts is None:
-        return [
-            {"display": "Adam — Nam · Nam · Giọng đọc tự nhiên", "name": "Adam"},
-            {"display": "Adam bựa — Nam · Bắc · Phong cách tự nhiên", "name": "Adam bựa"},
-            {"display": "Hải Đăng — Nam · Bắc · Phong cách tự nhiên", "name": "Hải Đăng"},
-        ]
-    try:
-        raw_voices = tts.list_preset_voices()
-        all_v = []
-        for label, vid in raw_voices:
-            clean_label = label.replace("⭐ ", "").replace("⭐", "").strip()
-            all_v.append({"display": clean_label, "name": vid})
-        return all_v
-    except Exception as e:
-        print(f"Lỗi lấy danh sách giọng: {e}", flush=True)
-        return [
-            {"display": "Adam — Nam · Nam · Giọng đọc tự nhiên", "name": "Adam"},
-            {"display": "Adam bựa — Nam · Bắc · Phong cách tự nhiên", "name": "Adam bựa"},
-            {"display": "Hải Đăng — Nam · Bắc · Phong cách tự nhiên", "name": "Hải Đăng"},
-        ]
+# Danh sách 11 giọng chuẩn của VieNeu v3nano (Đầy đủ Nam, Nữ, Bắc, Nam, Trung)
+ALL_PRESET_VOICES = [
+    {"display": "Adam bựa — Nam · Bắc · Phong cách tự nhiên ⭐", "name": "Adam bựa"},
+    {"display": "Minh Quân Pro — Nam · Nam · Giọng đọc truyền cảm", "name": "Minh Quân Pro"},
+    {"display": "Mai Anh — Nữ · Bắc · Phong cách nhẹ nhàng", "name": "Mai Anh"},
+    {"display": "Trúc Ly — Nữ · Nam · Giọng đọc tự nhiên", "name": "Trúc Ly"},
+    {"display": "Anh Khôi — Nam · Nam · Phong cách trẻ trung", "name": "Anh Khôi"},
+    {"display": "Thùy Dung — Nữ · Bắc · Giọng đọc tin tức", "name": "Thùy Dung"},
+    {"display": "Minh Đức — Nam · Bắc · Giọng đọc trầm ấm", "name": "Minh Đức"},
+    {"display": "Ngọc Huyền — Nữ · Bắc · Phong cách ngọt ngào", "name": "Ngọc Huyền"},
+    {"display": "Quang Sơn — Nam · Trung · Phong cách tự nhiên", "name": "Quang Sơn"},
+    {"display": "Ngọc Trân — Nữ · Nam · Giọng đọc truyền hình", "name": "Ngọc Trân"},
+    {"display": "Thiền Tâm Đức — Nam · Trầm ấm · Kể chuyện thiền", "name": "Thiền Tâm Đức"},
+]
 
-ALL_PRESET_VOICES = get_all_preset_voices()
 VOICE_MAP = {v["display"]: v["name"] for v in ALL_PRESET_VOICES}
 ALL_DISPLAYS = [v["display"] for v in ALL_PRESET_VOICES]
-
-# Đặt giọng Adam hoặc Hải Đăng làm mặc định ban đầu
-DEFAULT_DISPLAY = next((d for d in ALL_DISPLAYS if "Adam —" in d), ALL_DISPLAYS[0] if ALL_DISPLAYS else "")
+DEFAULT_DISPLAY = ALL_DISPLAYS[0]
 
 # Hàm lọc tìm kiếm giọng đọc theo từ khóa và phân loại
 def filter_preset_voices(search_text, category):
@@ -116,42 +120,41 @@ SAMPLE_TEXT = (
 
 # ── Hàm xử lý tạo giọng nói ────────────────────────────────────────────────
 def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature):
-    if tts is None:
-        raise gr.Error("❌ Mô hình chưa được tải thành công. Vui lòng kiểm tra lại console.")
-
     text = (text or "").strip()
     if not text:
         raise gr.Error("⚠️ Vui lòng nhập nội dung văn bản cần đọc!")
 
+    engine, sr = get_tts()
+    if engine is None:
+        raise gr.Error("❌ Không thể khởi tạo mô hình AI trên server!")
+
     start_time = time.perf_counter()
 
     if mode == "preset":
-        # Kiểu 1: Giọng mặc định từ thư viện VieNeu
         if not preset_voice_display or "Không tìm thấy" in preset_voice_display:
             raise gr.Error("⚠️ Vui lòng chọn một giọng đọc hợp lệ trong danh sách!")
         
-        # Tra cứu tên giọng thực tế (ví dụ: 'Adam bựa', 'Adam', 'Hải Đăng')
         actual_voice_name = VOICE_MAP.get(preset_voice_display, preset_voice_display.split(" — ")[0].strip())
-        print(f"🎙️ Đang tổng hợp giọng mặc định: {actual_voice_name} ({preset_voice_display})", flush=True)
-        
-        audio = tts.infer(text, voice=actual_voice_name, temperature=float(temperature))
+        print(f"🎙️ Đang tổng hợp giọng: {actual_voice_name} ({preset_voice_display})", flush=True)
+        audio = engine.infer(text, voice=actual_voice_name, temperature=float(temperature))
         info_source = f"Giọng chuẩn VieNeu: **{actual_voice_name}**"
     else:
-        # Kiểu 2: Clone chất giọng từ file mẫu đã tải lên server
         if not custom_voice_file or "Chưa có file" in custom_voice_file:
-            raise gr.Error("⚠️ Thư mục 'voices/' chưa có file .wav nào! Hãy copy file .wav (3-5s) vào thư mục voices/ trên máy.")
+            raise gr.Error("⚠️ Thư mục 'voices/' chưa có file .wav nào! Hãy tải file .wav lên repo.")
 
         ref_path = os.path.join(VOICES_DIR, custom_voice_file)
         if not os.path.exists(ref_path):
             raise gr.Error(f"⚠️ Không tìm thấy file âm thanh: {custom_voice_file}")
 
         print(f"🎙️ Đang clone chất giọng từ file: {ref_path}", flush=True)
-        audio = tts.infer(text, ref_audio=ref_path, temperature=float(temperature))
+        audio = engine.infer(text, ref_audio=ref_path, temperature=float(temperature))
         info_source = f"Clone từ file server: **{custom_voice_file}**"
 
     elapsed = time.perf_counter() - start_time
     audio_data = np.asarray(audio, dtype=np.float32)
-    duration = len(audio_data) / SR if SR else 0.0
+    duration = len(audio_data) / sr if sr else 0.0
+
+    gc.collect()
 
     stats = (
         f"✅ **Đã tạo giọng nói thành công!**\n\n"
@@ -159,7 +162,7 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
         f"• **Thời gian xử lý:** **{elapsed:.2f}s**\n"
         f"• **Độ dài audio:** **{duration:.2f}s** (Tốc độ: {duration / elapsed:.1f}x thời gian thực)"
     )
-    return (SR, audio_data), stats
+    return (sr, audio_data), stats
 
 # ── Hàm làm mới danh sách file mẫu ──────────────────────────────────────────
 def refresh_file_list():
