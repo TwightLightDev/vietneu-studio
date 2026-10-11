@@ -49,10 +49,12 @@ def get_tts():
                 _tts_sr = getattr(_tts_instance, "sample_rate", 48000)
     return _tts_instance, _tts_sr
 
-# ── Quản lý thư mục file giọng mẫu trên server ─────────────────────────────
+# ── Quản lý thư mục file giọng mẫu và kết quả âm thanh ──────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VOICES_DIR = os.path.join(BASE_DIR, "voices")
+OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(VOICES_DIR, exist_ok=True)
+os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
 # Danh sách 11 giọng chuẩn của VieNeu v3nano (Đầy đủ Nam, Nữ, Bắc, Nam, Trung)
 ALL_PRESET_VOICES = [
@@ -154,6 +156,12 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
     audio_data = np.asarray(audio, dtype=np.float32)
     duration = len(audio_data) / sr if sr else 0.0
 
+    # Lưu tệp .wav vào outputs/ để hỗ trợ iPhone mở trực tiếp hoặc tải về
+    timestamp = int(time.time())
+    out_filename = f"vietneu_{timestamp}.wav"
+    out_filepath = os.path.join(OUTPUTS_DIR, out_filename)
+    sf.write(out_filepath, audio_data, sr)
+
     gc.collect()
 
     stats = (
@@ -162,7 +170,7 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
         f"• **Thời gian xử lý:** **{elapsed:.2f}s**\n"
         f"• **Độ dài audio:** **{duration:.2f}s** (Tốc độ: {duration / elapsed:.1f}x thời gian thực)"
     )
-    return (sr, audio_data), stats
+    return out_filepath, stats
 
 # ── Hàm làm mới danh sách file mẫu ──────────────────────────────────────────
 def refresh_file_list():
@@ -250,6 +258,145 @@ custom_css = """
 .audio-player {
     border-radius: 12px !important;
 }
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-decoration: none !important;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s ease;
+    flex: 1 1 calc(50% - 8px);
+    box-sizing: border-box;
+    text-align: center;
+}
+.btn-ios { background: #0284c7; color: white !important; }
+.btn-ios:hover { background: #0369a1; }
+.btn-share { background: #10b981; color: white !important; }
+.btn-share:hover { background: #059669; }
+.btn-download { background: #475569; color: white !important; }
+.btn-download:hover { background: #334155; }
+"""
+
+custom_head_html = """
+<script>
+let notificationsAllowed = false;
+
+function playChime() {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        const ctx = new AudioContext();
+        if (ctx.state === 'suspended') { ctx.resume(); }
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.setValueAtTime(880.0, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.6);
+    } catch (e) {
+        console.log("AudioContext error:", e);
+    }
+}
+
+function requestNotificationAccess() {
+    playChime();
+    if ("Notification" in window) {
+        Notification.requestPermission().then(permission => {
+            const btn = document.getElementById("btn-notify-toggle");
+            if (permission === "granted") {
+                notificationsAllowed = true;
+                if (btn) {
+                    btn.innerHTML = "✅ Đã bật thông báo";
+                    btn.style.background = "#10b981";
+                }
+                new Notification("🎙️ VietNeu Studio", {
+                    body: "Đã bật chuông & thông báo thành công! Bạn sẽ nhận được thông báo khi tạo giọng xong.",
+                    icon: "https://fav.farm/🔊"
+                });
+            } else {
+                if (btn) btn.innerHTML = "⚠️ Chưa cấp quyền";
+            }
+        });
+    } else {
+        alert("Trình duyệt này hỗ trợ chuông báo âm thanh khi xong.");
+    }
+}
+
+let currentAudioUrl = "";
+
+function onAudioReady() {
+    playChime();
+    if (navigator.vibrate) {
+        navigator.vibrate([200, 100, 250]);
+    }
+    const oldTitle = document.title;
+    document.title = "🔔 [ĐÃ XONG!] " + oldTitle;
+    setTimeout(() => { document.title = oldTitle; }, 10000);
+
+    if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("🎉 VietNeu Voice Studio", {
+            body: "Âm thanh của bạn đã được tạo xong! Bấm để mở nghe ngay.",
+            icon: "https://fav.farm/🔊"
+        });
+    }
+
+    setTimeout(() => {
+        const audioTag = document.querySelector("#audio-result audio");
+        if (audioTag && audioTag.src) {
+            currentAudioUrl = audioTag.src;
+            const openBtn = document.getElementById("btn-ios-open");
+            const dlBtn = document.getElementById("btn-pc-download");
+            const box = document.getElementById("ios-actions-box");
+            if (openBtn) openBtn.href = currentAudioUrl;
+            if (dlBtn) dlBtn.href = currentAudioUrl;
+            if (box) box.style.display = "block";
+        }
+    }, 600);
+}
+
+async function shareAudioNative() {
+    if (!currentAudioUrl) {
+        const audioTag = document.querySelector("#audio-result audio");
+        if (audioTag) currentAudioUrl = audioTag.src;
+    }
+    if (!currentAudioUrl) {
+        alert("Chưa có file âm thanh để chia sẻ!");
+        return;
+    }
+    try {
+        const res = await fetch(currentAudioUrl);
+        const blob = await res.blob();
+        const file = new File([blob], "vietneu_voice.wav", { type: "audio/wav" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+                files: [file],
+                title: "VietNeu TTS Audio",
+                text: "Giọng nói tiếng Việt tạo bởi VietNeu Studio"
+            });
+        } else if (navigator.share) {
+            await navigator.share({
+                url: currentAudioUrl,
+                title: "VietNeu TTS Audio"
+            });
+        } else {
+            window.open(currentAudioUrl, "_blank");
+        }
+    } catch (e) {
+        if (e.name !== "AbortError") {
+            window.open(currentAudioUrl, "_blank");
+        }
+    }
+}
+</script>
 """
 
 theme = gr.themes.Soft(
@@ -258,13 +405,28 @@ theme = gr.themes.Soft(
     neutral_hue="slate"
 )
 
-with gr.Blocks(title="VietNeu Voice Studio") as demo:
+with gr.Blocks(title="VietNeu Voice Studio", head=custom_head_html) as demo:
     with gr.Column(elem_classes=["container"]):
         gr.Markdown(
             """
             <div style="text-align: center; margin-bottom: 12px;">
                 <h1 style="font-size: 1.8rem; margin-bottom: 4px;">🎙️ VietNeu Voice Studio</h1>
                 <p style="color: #64748b; font-size: 0.95rem;">Đọc văn bản & Clone giọng nói tiếng Việt bằng AI</p>
+            </div>
+            """
+        )
+
+        # Thanh kích hoạt thông báo khi xong
+        gr.HTML(
+            """
+            <div id="notify-bar" style="display: flex; align-items: center; justify-content: space-between; background: #eff6ff; border: 1px solid #bfdbfe; padding: 10px 14px; border-radius: 12px; margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: #1e40af;">
+                    <span style="font-size: 1.2rem;">🔔</span>
+                    <span><b>Chuông & Thông báo:</b> Nhận báo hiệu khi tạo xong (kể cả khi đổi tab hoặc khoá màn hình)</span>
+                </div>
+                <button id="btn-notify-toggle" onclick="requestNotificationAccess()" style="background: #2563eb; color: white; border: none; padding: 6px 12px; border-radius: 8px; font-size: 0.82rem; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                    Bật thông báo
+                </button>
             </div>
             """
         )
@@ -352,12 +514,38 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
 
         # 4. Trình phát nhạc & thông tin kết quả
         audio_output = gr.Audio(
-            label="🎧 Kết quả âm thanh (Nghe & Tải về)",
-            type="numpy",
+            label="🎧 Trình phát âm thanh (Nghe trực tiếp)",
+            type="filepath",
             autoplay=True,
             elem_classes=["audio-player"],
+            elem_id="audio-result",
         )
         stats_output = gr.Markdown()
+
+        # Bảng điều khiển thao tác tệp thông minh & Tối ưu cho iPhone
+        gr.HTML(
+            """
+            <div id="ios-actions-box" style="display: none; margin-top: 10px; padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 8px; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+                    <span>⚡ Thao tác tệp & Tải về:</span>
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <a id="btn-ios-open" href="#" target="_blank" class="action-btn btn-ios">
+                        📱 Mở tệp trực tiếp (iPhone)
+                    </a>
+                    <button id="btn-ios-share" class="action-btn btn-share" onclick="shareAudioNative()">
+                        📤 Gửi Zalo / Lưu Tệp / AirDrop
+                    </button>
+                    <a id="btn-pc-download" href="#" download="vietneu_voice.wav" class="action-btn btn-download">
+                        💾 Tải file .wav
+                    </a>
+                </div>
+                <div style="font-size: 0.8rem; color: #64748b; margin-top: 8px; line-height: 1.4;">
+                    💡 <b>Dành cho iPhone:</b> Bấm <i>"Mở tệp trực tiếp"</i> để Safari phát ngay trong trình phát iOS, hoặc bấm <i>"Gửi Zalo / Lưu Tệp"</i> để chuyển thẳng vào ứng dụng hoặc chọn thư mục lưu mà không phải vào mục Downloads!
+                </div>
+            </div>
+            """
+        )
 
         # Tuỳ chọn nâng cao (thu gọn mặc định)
         with gr.Accordion("⚙️ Cài đặt nâng cao (Tuỳ chọn)", open=False):
@@ -418,6 +606,11 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
             temperature_slider,
         ],
         outputs=[audio_output, stats_output],
+    ).then(
+        None,
+        None,
+        None,
+        js="() => { onAudioReady(); }"
     )
 
 def get_local_ip():
@@ -440,6 +633,7 @@ if __name__ == "__main__":
         server_port=port,
         theme=theme,
         css=custom_css,
+        allowed_paths=[VOICES_DIR, OUTPUTS_DIR],
     )
     
     local_ip = get_local_ip()
