@@ -168,6 +168,60 @@ def refresh_file_list():
         return gr.Dropdown(choices=["Chưa có file mẫu trong thư mục voices/"], value="Chưa có file mẫu trong thư mục voices/")
     return gr.Dropdown(choices=files, value=files[0])
 
+# ── Hàm trích xuất văn bản từ nhiều định dạng file ──────────────────────────
+def extract_text_from_file(file_obj):
+    if file_obj is None:
+        return gr.update(), ""
+    file_path = file_obj.name if hasattr(file_obj, "name") else str(file_obj)
+    filename = os.path.basename(file_path)
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    extracted_text = ""
+    # 1. File Word (.docx)
+    if ext == ".docx":
+        try:
+            import docx
+            doc = docx.Document(file_path)
+            paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            extracted_text = "\n".join(paragraphs)
+        except Exception as e:
+            return gr.update(), f"❌ Không thể đọc file Word (.docx): {e}"
+            
+    # 2. File PDF (.pdf)
+    elif ext == ".pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(file_path)
+            pages_text = [p.extract_text() for p in reader.pages if p.extract_text()]
+            extracted_text = "\n".join(pages_text)
+        except Exception as e:
+            return gr.update(), f"❌ Không thể đọc file PDF: {e}"
+            
+    # 3. Các file text / config (.txt, .yml, .yaml, .md, .json, .csv, .log...)
+    else:
+        for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    extracted_text = f.read()
+                break
+            except UnicodeDecodeError:
+                continue
+        if not extracted_text:
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    extracted_text = f.read()
+            except Exception as e:
+                return gr.update(), f"❌ Không thể đọc file văn bản: {e}"
+
+    clean_text = extracted_text.strip()
+    if not clean_text:
+        return gr.update(), f"⚠️ File `{filename}` không chứa nội dung chữ nào!"
+        
+    num_chars = len(clean_text)
+    num_words = len(clean_text.split())
+    status_msg = f"✅ **Đã nạp thành công từ `{filename}`** ({num_chars:,} ký tự, ~{num_words:,} từ)"
+    return clean_text, status_msg
+
 # Cập nhật hiển thị giao diện khi đổi chế độ
 def on_mode_change(mode):
     if mode == "preset":
@@ -212,14 +266,22 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
             """
         )
 
-        # 1. Ô nhập văn bản
+        # 1. Ô nhập văn bản & Nạp từ file
         text_input = gr.Textbox(
-            label="📝 1. Nhập văn bản cần đọc",
-            placeholder="Nhập nội dung văn bản tiếng Việt tại đây...",
+            label="📝 1. Nội dung văn bản cần đọc",
+            placeholder="Nhập nội dung tiếng Việt hoặc nạp từ file (.txt, .docx, .yml, .pdf) ở bên dưới...",
             value=SAMPLE_TEXT,
             lines=4,
-            max_lines=8,
+            max_lines=10,
         )
+
+        with gr.Accordion("📂 Hoặc nạp từ file tài liệu (.txt, .docx, .yml, .yaml, .pdf, .md, .json...)", open=False):
+            file_input = gr.File(
+                label="Chọn hoặc kéo thả file văn bản (Tự động trích xuất nội dung vào ô trên)",
+                file_types=[".txt", ".docx", ".yml", ".yaml", ".pdf", ".md", ".json", ".csv"],
+                file_count="single",
+            )
+            file_status = gr.Markdown()
 
         # 2. Chọn chế độ nguồn giọng
         mode_radio = gr.Radio(
@@ -330,6 +392,17 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
     refresh_btn.click(
         fn=refresh_file_list,
         outputs=[custom_dropdown],
+    )
+
+    # Tự động trích xuất nội dung khi tải file văn bản lên
+    file_input.change(
+        fn=extract_text_from_file,
+        inputs=[file_input],
+        outputs=[text_input, file_status],
+    )
+    file_input.clear(
+        fn=lambda: "",
+        outputs=[file_status],
     )
 
     generate_btn.click(
