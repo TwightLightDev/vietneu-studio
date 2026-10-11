@@ -8,9 +8,8 @@ Công cụ Text-to-Speech (TTS) và Clone giọng nói tiếng Việt tối ưu 
 - **Clone giọng mẫu:** Tải các file `.wav` vào thư mục `voices/` để tạo giọng đọc tương tự.
 - **Tối ưu bộ nhớ:** Tự động hỗ trợ `precision="int8"` nhằm tiết kiệm RAM trên Cloud Free Tier (Render.com).
 
-## Triển khai trên Render.com
-1. Tạo Web Service mới trên [Render Dashboard](https://dashboard.render.com).
-2. Kết nối repo này hoặc nhập URL repository.
-3. Build Command: `pip install -r requirements.txt`
-4. Start Command: `python app.py`
-5. Chọn gói **Free**.
+## Triển khai 1-Click trên Render.com
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/TwightLightDev/vietneu-studio)
+
+1. Bấm vào nút **Deploy to Render** ở trên hoặc truy cập: https://render.com/deploy?repo=https://github.com/TwightLightDev/vietneu-studio
+2. Bấm **Apply** để Render tự động tải toàn bộ và chạy 24/24 miễn phí.
