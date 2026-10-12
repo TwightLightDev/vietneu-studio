@@ -29,7 +29,9 @@ if not exist "D:\Youtube\libs\models\hf_cache" (
     echo.
 )
 
-:: 3. Tự động tắt phiên chạy cũ nếu đang chiếm cổng 7860
+:: 3. Tự động tắt phiên chạy cũ nếu đang chiếm cổng 7860 và dọn tunnel cũ
+taskkill /f /im ngrok.exe >nul 2>&1
+taskkill /f /im cloudflared.exe >nul 2>&1
 for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":7860" ^| findstr "LISTENING"') do (
     if not "%%a"=="" (
         echo [INFO] Phat hien phien chay cu dang mo cong 7860 (PID: %%a). Dang giai phong...

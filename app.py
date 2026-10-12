@@ -778,6 +778,30 @@ if __name__ == "__main__":
     threading.Thread(target=prewarm_in_background, daemon=True).start()
 
     CLOUDFLARED_BIN = os.path.join(BASE_DIR, "tools", "cloudflared.exe")
+    NGROK_BIN = os.path.join(BASE_DIR, "tools", "ngrok.exe")
+
+    def run_ngrok_tunnel():
+        if not os.path.exists(NGROK_BIN):
+            return
+        try:
+            cmd = [NGROK_BIN, "http", str(port), "--url=https://text-to-speech.ngrok-free.app", "--log=stdout"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="ignore")
+            for line in proc.stdout:
+                if "started tunnel" in line or "url=https://" in line or "text-to-speech.ngrok-free.app" in line:
+                    ngrok_url = "https://text-to-speech.ngrok-free.app"
+                    url_file = os.path.join(BASE_DIR, "urls.txt")
+                    try:
+                        with open(url_file, "a", encoding="utf-8") as f:
+                            f.write(f"NGROK={ngrok_url}\n")
+                    except Exception:
+                        pass
+                    print(f"⭐ TÊN MIỀN CỐ ĐỊNH NGROK (IPHONE / 4G): {ngrok_url}\n", flush=True)
+                if "ERR_NGROK_4018" in line or "authentication failed" in line:
+                    print("⚠️ Ngrok chưa được cấp authtoken. Vui lòng chạy add_ngrok_token.bat hoặc cung cấp authtoken!\n", flush=True)
+                    break
+        except Exception as e:
+            print(f"⚠️ Lỗi khởi động Ngrok Tunnel: {e}", flush=True)
+
     def run_cloudflare_tunnel():
         if not os.path.exists(CLOUDFLARED_BIN):
             return
@@ -799,8 +823,11 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"⚠️ Lỗi khởi động Cloudflare Tunnel: {e}", flush=True)
 
-    if not is_render and os.path.exists(CLOUDFLARED_BIN):
-        threading.Thread(target=run_cloudflare_tunnel, daemon=True).start()
+    if not is_render:
+        if os.path.exists(NGROK_BIN):
+            threading.Thread(target=run_ngrok_tunnel, daemon=True).start()
+        if os.path.exists(CLOUDFLARED_BIN):
+            threading.Thread(target=run_cloudflare_tunnel, daemon=True).start()
 
     local_ip = get_local_ip()
     wifi_url = f"http://{local_ip}:{port}"
@@ -811,13 +838,14 @@ if __name__ == "__main__":
         url_file = os.path.join(BASE_DIR, "urls.txt")
         try:
             with open(url_file, "w", encoding="utf-8") as f:
-                f.write(f"LOCAL=http://127.0.0.1:{port}\nWIFI={wifi_url}\nSHARE={share_url}\n")
+                f.write(f"NGROK=https://text-to-speech.ngrok-free.app\nWIFI={wifi_url}\nLOCAL=http://127.0.0.1:{port}\nSHARE={share_url}\n")
         except Exception:
             pass
         print(f"\n=========================================\n"
-              f"🚀 LOCALHOST: http://127.0.0.1:{port}\n"
+              f"⭐ TÊN MIỀN CỐ ĐỊNH (NGROK): https://text-to-speech.ngrok-free.app\n"
               f"📱 WI-FI LAN (CÙNG MẠNG - CỐ ĐỊNH, SIÊU TỐC 0s): {wifi_url}\n"
-              f"🌐 GRADIO SHARE (4G): {share_url}\n"
+              f"🚀 LOCALHOST: http://127.0.0.1:{port}\n"
+              f"🌐 GRADIO SHARE (4G DỰ PHÒNG): {share_url}\n"
               f"=========================================\n", flush=True)
 
     threading.Thread(target=log_urls_after_start, daemon=True).start()
