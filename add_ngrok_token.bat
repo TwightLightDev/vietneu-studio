@@ -31,7 +31,7 @@ if %errorlevel% equ 0 (
     echo ===============================================================================
     echo ✅ ĐÃ CẤU HÌNH THÀNH CÔNG AUTHTOKEN NGROK!
     echo Bây giờ bạn có thể chạy 'fast_start.bat' hoặc bật ứng dụng từ Desktop.
-    echo Tên miền cố định: https://text-to-speech.ngrok-free.app
+    echo Tên miền cố định: https://nondisciplining-foudroyant-calvin.ngrok-free.dev
     echo ===============================================================================
 ) else (
     echo.

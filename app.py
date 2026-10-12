@@ -779,25 +779,25 @@ if __name__ == "__main__":
 
     CLOUDFLARED_BIN = os.path.join(BASE_DIR, "tools", "cloudflared.exe")
     NGROK_BIN = os.path.join(BASE_DIR, "tools", "ngrok.exe")
+    NGROK_PERMANENT_DOMAIN = "https://nondisciplining-foudroyant-calvin.ngrok-free.dev"
 
     def run_ngrok_tunnel():
         if not os.path.exists(NGROK_BIN):
             return
         try:
-            cmd = [NGROK_BIN, "http", str(port), "--url=https://text-to-speech.ngrok-free.app", "--log=stdout"]
+            cmd = [NGROK_BIN, "http", str(port), f"--url={NGROK_PERMANENT_DOMAIN}", "--log=stdout"]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="ignore")
             for line in proc.stdout:
-                if "started tunnel" in line or "url=https://" in line or "text-to-speech.ngrok-free.app" in line:
-                    ngrok_url = "https://text-to-speech.ngrok-free.app"
+                if "started tunnel" in line or "nondisciplining-foudroyant-calvin" in line:
                     url_file = os.path.join(BASE_DIR, "urls.txt")
                     try:
                         with open(url_file, "a", encoding="utf-8") as f:
-                            f.write(f"NGROK={ngrok_url}\n")
+                            f.write(f"NGROK={NGROK_PERMANENT_DOMAIN}\n")
                     except Exception:
                         pass
-                    print(f"⭐ TÊN MIỀN CỐ ĐỊNH NGROK (IPHONE / 4G): {ngrok_url}\n", flush=True)
+                    print(f"⭐ TÊN MIỀN CỐ ĐỊNH NGROK (IPHONE / 4G): {NGROK_PERMANENT_DOMAIN}\n", flush=True)
                 if "ERR_NGROK_4018" in line or "authentication failed" in line:
-                    print("⚠️ Ngrok chưa được cấp authtoken. Vui lòng chạy add_ngrok_token.bat hoặc cung cấp authtoken!\n", flush=True)
+                    print("⚠️ Ngrok chưa được cấp authtoken!\n", flush=True)
                     break
         except Exception as e:
             print(f"⚠️ Lỗi khởi động Ngrok Tunnel: {e}", flush=True)
@@ -838,11 +838,11 @@ if __name__ == "__main__":
         url_file = os.path.join(BASE_DIR, "urls.txt")
         try:
             with open(url_file, "w", encoding="utf-8") as f:
-                f.write(f"NGROK=https://text-to-speech.ngrok-free.app\nWIFI={wifi_url}\nLOCAL=http://127.0.0.1:{port}\nSHARE={share_url}\n")
+                f.write(f"NGROK={NGROK_PERMANENT_DOMAIN}\nWIFI={wifi_url}\nLOCAL=http://127.0.0.1:{port}\nSHARE={share_url}\n")
         except Exception:
             pass
         print(f"\n=========================================\n"
-              f"⭐ TÊN MIỀN CỐ ĐỊNH (NGROK): https://text-to-speech.ngrok-free.app\n"
+              f"⭐ TÊN MIỀN CỐ ĐỊNH (NGROK): {NGROK_PERMANENT_DOMAIN}\n"
               f"📱 WI-FI LAN (CÙNG MẠNG - CỐ ĐỊNH, SIÊU TỐC 0s): {wifi_url}\n"
               f"🚀 LOCALHOST: http://127.0.0.1:{port}\n"
               f"🌐 GRADIO SHARE (4G DỰ PHÒNG): {share_url}\n"
