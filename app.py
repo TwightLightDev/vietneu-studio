@@ -24,6 +24,8 @@ import time
 import gc
 import re
 import shutil
+import subprocess
+import threading
 import numpy as np
 import soundfile as sf
 import gradio as gr
@@ -46,13 +48,16 @@ def register_custom_voices(tts_instance):
         except Exception as e:
             print(f"⚠️ Lỗi thay thế giọng Adam bựa: {e}", flush=True)
 
-# ── Khởi tạo mô hình VieNeu-TTS v3 Turbo ────────────────────────────────────
+# ── Khởi tạo mô hình VieNeu-TTS v3 Turbo (Thread-safe) ──────────────────────
+_tts_lock = threading.Lock()
 _tts_instance = None
 _tts_sr = 24000
 
 def get_tts():
     global _tts_instance, _tts_sr
-    if _tts_instance is None:
+    with _tts_lock:
+        if _tts_instance is not None:
+            return _tts_instance, _tts_sr
         print("⏳ Đang nạp mô hình VieNeu-TTS v3 Turbo...", flush=True)
         gc.collect()
         try:
@@ -61,11 +66,9 @@ def get_tts():
             register_custom_voices(_tts_instance)
             print(f"✅ Mô hình Turbo v3 đã sẵn sàng! Tần số: {_tts_sr} Hz", flush=True)
         except Exception as e:
-            print(f"⚠️ Thử khởi tạo mặc định: {e}", flush=True)
-            _tts_instance = Vieneu()
-            _tts_sr = getattr(_tts_instance, "sample_rate", 24000)
-            register_custom_voices(_tts_instance)
-    return _tts_instance, _tts_sr
+            print(f"⚠️ Lỗi khởi tạo mô hình: {e}", flush=True)
+            raise e
+        return _tts_instance, _tts_sr
 
 # Danh sách đầy đủ 25 giọng chuẩn chính xác của VieNeu-TTS-v3-Turbo
 ALL_PRESET_VOICES = [
@@ -237,7 +240,7 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
 # ── Hàm tải file giọng mẫu mới từ giao diện Web ─────────────────────────────
 def handle_voice_upload(file_obj):
     if file_obj is None:
-        return gr.update(), ""
+        return gr.update(), "", gr.update(), gr.update(), gr.update()
     file_path = file_obj.name if hasattr(file_obj, "name") else str(file_obj)
     orig_name = os.path.basename(file_path)
     base_name, _ = os.path.splitext(orig_name)
@@ -247,6 +250,10 @@ def handle_voice_upload(file_obj):
     try:
         import torchaudio
         wav, sr = torchaudio.load(file_path)
+        # Giới hạn tối đa 8 giây đầu tiên - tối ưu hóa tốc độ và độ chuẩn của VieNeu
+        max_samples = int(8.0 * sr)
+        if wav.shape[-1] > max_samples:
+            wav = wav[..., :max_samples]
         torchaudio.save(dest_path, wav, sr)
         saved_name = f"{clean_base}.wav"
     except Exception:
@@ -255,8 +262,9 @@ def handle_voice_upload(file_obj):
         saved_name = orig_name
         
     updated_files = get_custom_voice_files()
-    status_msg = f"✅ **Đã nạp file giọng `{saved_name}` thành công!** (Đã tự động chọn trong danh sách)"
-    return gr.Dropdown(choices=updated_files, value=saved_name), status_msg
+    status_msg = f"✅ **Đã nạp file giọng `{saved_name}` thành công!** Đã tự động kích hoạt Kiểu 2 và chọn file này."
+    # Chuyển mode_radio sang 'clone', mở clone_box, ẩn preset_box
+    return gr.Dropdown(choices=updated_files, value=saved_name), status_msg, "clone", gr.update(visible=False), gr.update(visible=True)
 
 # ── Hàm làm mới danh sách file mẫu ──────────────────────────────────────────
 def refresh_file_list():
@@ -420,6 +428,16 @@ function requestNotificationAccess() {
 
 let currentAudioUrl = "";
 
+function onGenerationStart() {
+    currentAudioUrl = "";
+    const box = document.getElementById("ios-actions-box");
+    if (box) box.style.display = "none";
+    const openBtn = document.getElementById("btn-ios-open");
+    const dlBtn = document.getElementById("btn-pc-download");
+    if (openBtn) openBtn.href = "#";
+    if (dlBtn) dlBtn.href = "#";
+}
+
 function onAudioReady() {
     playChime();
     if (navigator.vibrate) {
@@ -436,9 +454,11 @@ function onAudioReady() {
         });
     }
 
-    setTimeout(() => {
+    let checkCount = 0;
+    const interval = setInterval(() => {
+        checkCount++;
         const audioTag = document.querySelector("#audio-result audio");
-        if (audioTag && audioTag.src) {
+        if (audioTag && audioTag.src && audioTag.src !== currentAudioUrl && !audioTag.src.endsWith("#")) {
             currentAudioUrl = audioTag.src;
             const openBtn = document.getElementById("btn-ios-open");
             const dlBtn = document.getElementById("btn-pc-download");
@@ -446,8 +466,10 @@ function onAudioReady() {
             if (openBtn) openBtn.href = currentAudioUrl;
             if (dlBtn) dlBtn.href = currentAudioUrl;
             if (box) box.style.display = "block";
+            clearInterval(interval);
         }
-    }, 600);
+        if (checkCount > 25) clearInterval(interval);
+    }, 200);
 }
 
 async function shareAudioNative() {
@@ -685,7 +707,7 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
     voice_upload.change(
         fn=handle_voice_upload,
         inputs=[voice_upload],
-        outputs=[custom_dropdown, voice_upload_status],
+        outputs=[custom_dropdown, voice_upload_status, mode_radio, preset_box, clone_box],
     )
     voice_upload.clear(
         fn=lambda: "",
@@ -703,7 +725,15 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
         outputs=[file_status],
     )
 
+    def start_generation_ui():
+        # Xóa trắng audio player và thông báo kết quả cũ ngay lập tức
+        return None, "⏳ **Đang tổng hợp giọng nói mới... Vui lòng đợi trong giây lát!**"
+
     generate_btn.click(
+        fn=start_generation_ui,
+        outputs=[audio_output, stats_output],
+        js="() => { onGenerationStart(); }"
+    ).then(
         fn=process_tts,
         inputs=[
             text_input,
@@ -747,6 +777,31 @@ if __name__ == "__main__":
             print(f"Lỗi nạp nền: {e}", flush=True)
     threading.Thread(target=prewarm_in_background, daemon=True).start()
 
+    CLOUDFLARED_BIN = os.path.join(BASE_DIR, "tools", "cloudflared.exe")
+    def run_cloudflare_tunnel():
+        if not os.path.exists(CLOUDFLARED_BIN):
+            return
+        try:
+            cmd = [CLOUDFLARED_BIN, "tunnel", "--url", f"http://127.0.0.1:{port}"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
+            for line in proc.stderr:
+                match = re.search(r"https://[a-zA-Z0-9\-]+\.trycloudflare\.com", line)
+                if match:
+                    cf_url = match.group(0)
+                    url_file = os.path.join(BASE_DIR, "urls.txt")
+                    try:
+                        with open(url_file, "a", encoding="utf-8") as f:
+                            f.write(f"CLOUDFLARE={cf_url}\n")
+                    except Exception:
+                        pass
+                    print(f"⚡ CLOUDFLARE TỐC ĐỘ CAO (HONG KONG / VN): {cf_url}\n", flush=True)
+                    break
+        except Exception as e:
+            print(f"⚠️ Lỗi khởi động Cloudflare Tunnel: {e}", flush=True)
+
+    if not is_render and os.path.exists(CLOUDFLARED_BIN):
+        threading.Thread(target=run_cloudflare_tunnel, daemon=True).start()
+
     local_ip = get_local_ip()
     wifi_url = f"http://{local_ip}:{port}"
 
@@ -759,7 +814,11 @@ if __name__ == "__main__":
                 f.write(f"LOCAL=http://127.0.0.1:{port}\nWIFI={wifi_url}\nSHARE={share_url}\n")
         except Exception:
             pass
-        print(f"\n=========================================\n🚀 LOCALHOST: http://127.0.0.1:{port}\n📱 WI-FI LAN (cùng mạng): {wifi_url}\n🌐 IPHONE TỪ XA (4G/Wifi): {share_url}\n=========================================\n", flush=True)
+        print(f"\n=========================================\n"
+              f"🚀 LOCALHOST: http://127.0.0.1:{port}\n"
+              f"📱 WI-FI LAN (CÙNG MẠNG - CỐ ĐỊNH, SIÊU TỐC 0s): {wifi_url}\n"
+              f"🌐 GRADIO SHARE (4G): {share_url}\n"
+              f"=========================================\n", flush=True)
 
     threading.Thread(target=log_urls_after_start, daemon=True).start()
 
