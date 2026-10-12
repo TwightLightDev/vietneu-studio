@@ -22,10 +22,29 @@ if sys.platform == "win32":
 
 import time
 import gc
+import re
+import shutil
 import numpy as np
 import soundfile as sf
 import gradio as gr
 from vieneu import Vieneu
+
+# ── Quản lý thư mục file giọng mẫu và kết quả âm thanh ──────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VOICES_DIR = os.path.join(BASE_DIR, "voices")
+OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs")
+os.makedirs(VOICES_DIR, exist_ok=True)
+os.makedirs(OUTPUTS_DIR, exist_ok=True)
+
+ADAM_BUA_WAV = os.path.join(VOICES_DIR, "adam_bua.wav")
+
+def register_custom_voices(tts_instance):
+    if os.path.exists(ADAM_BUA_WAV):
+        try:
+            tts_instance.add_voice("Adam bựa", ref_audio=ADAM_BUA_WAV, denoise=True, save=False)
+            print("🎙️ Đã thay thế thành công giọng 'Adam bựa' bằng file %5Bexcited%5D.mp3!", flush=True)
+        except Exception as e:
+            print(f"⚠️ Lỗi thay thế giọng Adam bựa: {e}", flush=True)
 
 # ── Khởi tạo mô hình VieNeu-TTS v3 Turbo ────────────────────────────────────
 _tts_instance = None
@@ -39,23 +58,18 @@ def get_tts():
         try:
             _tts_instance = Vieneu()
             _tts_sr = getattr(_tts_instance, "sample_rate", 24000)
+            register_custom_voices(_tts_instance)
             print(f"✅ Mô hình Turbo v3 đã sẵn sàng! Tần số: {_tts_sr} Hz", flush=True)
         except Exception as e:
             print(f"⚠️ Thử khởi tạo mặc định: {e}", flush=True)
             _tts_instance = Vieneu()
             _tts_sr = getattr(_tts_instance, "sample_rate", 24000)
+            register_custom_voices(_tts_instance)
     return _tts_instance, _tts_sr
-
-# ── Quản lý thư mục file giọng mẫu và kết quả âm thanh ──────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VOICES_DIR = os.path.join(BASE_DIR, "voices")
-OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs")
-os.makedirs(VOICES_DIR, exist_ok=True)
-os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
 # Danh sách đầy đủ 25 giọng chuẩn chính xác của VieNeu-TTS-v3-Turbo
 ALL_PRESET_VOICES = [
-    {"display": "⭐ Adam bựa — Nam · Bắc · Phong cách tự nhiên", "name": "Adam bựa"},
+    {"display": "⭐ Adam bựa (Giọng chuẩn %5Bexcited%5D) — Nam · Bắc", "name": "Adam bựa"},
     {"display": "⭐ Trúc Ly — Nữ · Bắc · Phong cách tự nhiên", "name": "Trúc Ly"},
     {"display": "⭐ Thiện Minh — Nam · Bắc · Phong cách kể chuyện", "name": "Thiện Minh"},
     {"display": "⭐ Mai Anh — Nữ · Bắc · Phong cách tin tức", "name": "Mai Anh"},
@@ -132,12 +146,11 @@ SAMPLE_TEXT = (
 )
 
 # ── Hàm xử lý tạo giọng nói ────────────────────────────────────────────────
-def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature, progress=gr.Progress(track_tqdm=True)):
+def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature):
     text = (text or "").strip()
     if not text:
         return None, "⚠️ **Vui lòng nhập nội dung văn bản cần đọc!**"
 
-    progress(0.1, desc="⏳ Đang chuẩn bị mô hình AI...")
     try:
         engine, sr = get_tts()
     except Exception as e:
@@ -156,7 +169,6 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
         if not actual_voice_name:
             actual_voice_name = preset_voice_display.split(" — ")[0].replace("⭐", "").strip()
             
-        progress(0.4, desc=f"🎙️ Đang tổng hợp giọng {actual_voice_name}...")
         print(f"🎙️ Đang tổng hợp giọng: {actual_voice_name} ({preset_voice_display})", flush=True)
         try:
             audio = engine.infer(text, voice=actual_voice_name, temperature=float(temperature))
@@ -164,7 +176,10 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
             print(f"❌ Lỗi tổng hợp giọng: {e}", flush=True)
             return None, f"❌ **Lỗi khi tạo giọng:** {e}"
             
-        info_source = f"Giọng chuẩn VieNeu: **{actual_voice_name}**"
+        if actual_voice_name == "Adam bựa":
+            info_source = "Giọng **Adam bựa** *(đã thay bằng file %5Bexcited%5D.mp3 của bạn)*"
+        else:
+            info_source = f"Giọng chuẩn VieNeu: **{actual_voice_name}**"
     else:
         if not custom_voice_file or "Chưa có file" in custom_voice_file:
             return None, "⚠️ **Chưa có file âm thanh mẫu nào trong thư mục 'voices/'!**"
@@ -173,7 +188,6 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
         if not os.path.exists(ref_path):
             return None, f"⚠️ **Không tìm thấy file âm thanh:** {custom_voice_file}"
 
-        progress(0.4, desc="🎙️ Đang phân tích file mẫu và clone giọng...")
         print(f"🎙️ Đang clone chất giọng từ file: {ref_path}", flush=True)
         try:
             audio = engine.infer(text, ref_audio=ref_path, temperature=float(temperature))
@@ -181,9 +195,8 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
             print(f"❌ Lỗi clone giọng: {e}", flush=True)
             return None, f"❌ **Lỗi khi clone giọng từ file:** {e}"
             
-        info_source = f"Clone từ file server: **{custom_voice_file}**"
+        info_source = f"Clone từ file: **{custom_voice_file}**"
 
-    progress(0.85, desc="🎧 Đang xuất và lưu file âm thanh...")
     elapsed = time.perf_counter() - start_time
     audio_data = np.asarray(audio, dtype=np.float32)
     duration = len(audio_data) / sr if sr else 0.0
@@ -196,7 +209,6 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
 
     gc.collect()
 
-    progress(1.0, desc="✅ Hoàn tất!")
     stats = (
         f"✅ **Đã tạo giọng nói thành công!**\n\n"
         f"• **Nguồn giọng:** {info_source}\n"
@@ -204,6 +216,30 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
         f"• **Độ dài audio:** **{duration:.2f}s** (Tốc độ: {duration / elapsed:.1f}x thời gian thực)"
     )
     return out_filepath, stats
+
+# ── Hàm tải file giọng mẫu mới từ giao diện Web ─────────────────────────────
+def handle_voice_upload(file_obj):
+    if file_obj is None:
+        return gr.update(), ""
+    file_path = file_obj.name if hasattr(file_obj, "name") else str(file_obj)
+    orig_name = os.path.basename(file_path)
+    base_name, _ = os.path.splitext(orig_name)
+    clean_base = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_') or "voice_custom"
+    dest_path = os.path.join(VOICES_DIR, f"{clean_base}.wav")
+    
+    try:
+        import torchaudio
+        wav, sr = torchaudio.load(file_path)
+        torchaudio.save(dest_path, wav, sr)
+        saved_name = f"{clean_base}.wav"
+    except Exception:
+        dest_path = os.path.join(VOICES_DIR, orig_name)
+        shutil.copy2(file_path, dest_path)
+        saved_name = orig_name
+        
+    updated_files = get_custom_voice_files()
+    status_msg = f"✅ **Đã nạp file giọng `{saved_name}` thành công!** (Đã tự động chọn trong danh sách)"
+    return gr.Dropdown(choices=updated_files, value=saved_name), status_msg
 
 # ── Hàm làm mới danh sách file mẫu ──────────────────────────────────────────
 def refresh_file_list():
@@ -313,6 +349,7 @@ custom_css = """
 .btn-share:hover { background: #059669; }
 .btn-download { background: #475569; color: white !important; }
 .btn-download:hover { background: #334155; }
+.progress-container, .progress-level { display: none !important; }
 """
 
 custom_head_html = """
@@ -468,7 +505,7 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
         text_input = gr.Textbox(
             label="📝 1. Nội dung văn bản cần đọc",
             placeholder="Nhập nội dung tiếng Việt hoặc nạp từ file (.txt, .docx, .yml, .pdf) ở bên dưới...",
-            value=SAMPLE_TEXT,
+            value="",
             lines=4,
             max_lines=10,
         )
@@ -485,7 +522,7 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
         mode_radio = gr.Radio(
             choices=[
                 ("Kiểu 1: Giọng có sẵn (VieNeu)", "preset"),
-                ("Kiểu 2: Giọng clone từ file (.wav)", "clone"),
+                ("Kiểu 2: Giọng clone từ file (.wav, .mp3)", "clone"),
             ],
             value="preset",
             label="🎯 2. Chọn kiểu giọng nói",
@@ -526,7 +563,7 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
         with clone_box:
             with gr.Row():
                 custom_dropdown = gr.Dropdown(
-                    label="Chọn file giọng mẫu trong thư mục voices/",
+                    label="Chọn file giọng mẫu trong thư viện voices/",
                     choices=initial_choices,
                     value=initial_choices[0],
                     allow_custom_value=True,
@@ -534,8 +571,18 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
                     scale=4,
                 )
                 refresh_btn = gr.Button("🔄 Quét lại", scale=1, variant="secondary")
+
+            with gr.Accordion("➕ Tải file giọng mẫu mới từ điện thoại / máy tính lên", open=True):
+                voice_upload = gr.File(
+                    label="Chọn hoặc kéo thả file âm thanh giọng mẫu (.wav, .mp3, .m4a)",
+                    file_types=[".wav", ".mp3", ".m4a", ".flac", ".ogg"],
+                    file_count="single",
+                )
+                voice_upload_status = gr.Markdown()
+
             gr.Markdown(
-                "💡 *Mẹo: File mẫu `.wav` chỉ cần dài **3–5 giây**, phát âm rõ ràng, ít ồn để clone chuẩn nhất.*"
+                "💡 *Mẹo: File mẫu chỉ cần dài **3–5 giây**, phát âm rõ ràng, ít ồn để clone chuẩn nhất.*<br>"
+                "📁 *Bạn cũng có thể copy file trực tiếp vào thư mục máy tính:* `vietneu-studio/voices/`"
             )
 
         # 3. Nút bấm tạo giọng
@@ -618,6 +665,16 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
         outputs=[custom_dropdown],
     )
 
+    voice_upload.change(
+        fn=handle_voice_upload,
+        inputs=[voice_upload],
+        outputs=[custom_dropdown, voice_upload_status],
+    )
+    voice_upload.clear(
+        fn=lambda: "",
+        outputs=[voice_upload_status],
+    )
+
     # Tự động trích xuất nội dung khi tải file văn bản lên
     file_input.change(
         fn=extract_text_from_file,
@@ -639,6 +696,7 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
             temperature_slider,
         ],
         outputs=[audio_output, stats_output],
+        show_progress="minimal",
     ).then(
         None,
         None,
