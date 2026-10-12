@@ -2,13 +2,16 @@ import os
 import sys
 import socket
 
-# Tối ưu hóa cực hạn bộ nhớ cho Cloud 512MB RAM
+# Tự động dọn biến proxy để tránh lỗi httpx IPv6 ::1
+os.environ.pop("no_proxy", None)
+os.environ.pop("NO_PROXY", None)
+
+# Sử dụng cache mô hình VieNeu-TTS-v3-Turbo đã tải sẵn tại D:\Youtube
+if os.path.exists(r"D:\Youtube\libs\models\hf_cache"):
+    os.environ["HF_HOME"] = r"D:\Youtube\libs\models\hf_cache"
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["ORT_DISABLE_MEMORY_ARENA"] = "1"
 
 if sys.platform == "win32":
     try:
@@ -24,29 +27,23 @@ import soundfile as sf
 import gradio as gr
 from vieneu import Vieneu
 
-# ── Khởi tạo mô hình VieNeu-TTS (Lazy Load + v3nano cho Cloud 512MB) ────────
+# ── Khởi tạo mô hình VieNeu-TTS v3 Turbo ────────────────────────────────────
 _tts_instance = None
 _tts_sr = 24000
 
 def get_tts():
     global _tts_instance, _tts_sr
     if _tts_instance is None:
-        print("⏳ Đang nạp mô hình VieNeu-TTS v3nano siêu nhẹ cho Cloud...", flush=True)
+        print("⏳ Đang nạp mô hình VieNeu-TTS v3 Turbo...", flush=True)
         gc.collect()
         try:
-            # v3nano: 48M tham số, chỉ chiếm ~100MB RAM, chạy cực êm trên Render Free 512MB
-            _tts_instance = Vieneu(mode="v3nano")
+            _tts_instance = Vieneu()
             _tts_sr = getattr(_tts_instance, "sample_rate", 24000)
-            print(f"✅ Mô hình v3nano đã sẵn sàng! Tần số: {_tts_sr} Hz", flush=True)
+            print(f"✅ Mô hình Turbo v3 đã sẵn sàng! Tần số: {_tts_sr} Hz", flush=True)
         except Exception as e:
-            print(f"⚠️ Thử khởi tạo với precision=int8: {e}", flush=True)
-            try:
-                _tts_instance = Vieneu(precision="int8")
-                _tts_sr = getattr(_tts_instance, "sample_rate", 48000)
-            except Exception as e2:
-                print(f"⚠️ Thử khởi tạo mặc định: {e2}", flush=True)
-                _tts_instance = Vieneu()
-                _tts_sr = getattr(_tts_instance, "sample_rate", 48000)
+            print(f"⚠️ Thử khởi tạo mặc định: {e}", flush=True)
+            _tts_instance = Vieneu()
+            _tts_sr = getattr(_tts_instance, "sample_rate", 24000)
     return _tts_instance, _tts_sr
 
 # ── Quản lý thư mục file giọng mẫu và kết quả âm thanh ──────────────────
@@ -56,19 +53,33 @@ OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(VOICES_DIR, exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
-# Danh sách 11 giọng chuẩn chính xác của VieNeu v3nano
+# Danh sách đầy đủ 25 giọng chuẩn chính xác của VieNeu-TTS-v3-Turbo
 ALL_PRESET_VOICES = [
-    {"display": "Adam — Nam · Bắc · Phong cách tự nhiên ⭐", "name": "Adam"},
-    {"display": "Mai Anh — Nữ · Bắc · Phong cách nhẹ nhàng", "name": "Mai Anh"},
-    {"display": "Trúc Ly — Nữ · Nam · Giọng đọc tự nhiên", "name": "Trúc Ly"},
-    {"display": "Anh Khôi — Nam · Nam · Phong cách trẻ trung", "name": "Anh Khôi"},
-    {"display": "Minh Quân — Nam · Nam · Giọng đọc truyền cảm", "name": "Minh Quân"},
-    {"display": "Ái Hân — Nữ · Nam · Giọng đọc diễn cảm", "name": "Ái Hân"},
-    {"display": "Mỹ Duyên — Nữ · Nam · Giọng đọc dịu dàng", "name": "Mỹ Duyên"},
-    {"display": "Đức Trí — Nam · Bắc · Phong cách trầm ấm", "name": "Đức Trí"},
-    {"display": "Hữu Quân — Nam · Bắc · Phong cách đĩnh đạc", "name": "Hữu Quân"},
-    {"display": "Xuân Tiên — Nữ · Trung · Phong cách tự nhiên", "name": "Xuân Tiên"},
-    {"display": "Mạnh Dũng — Nam · Bắc · Giọng đọc tin tức", "name": "Mạnh Dũng"},
+    {"display": "⭐ Adam bựa — Nam · Bắc · Phong cách tự nhiên", "name": "Adam bựa"},
+    {"display": "⭐ Trúc Ly — Nữ · Bắc · Phong cách tự nhiên", "name": "Trúc Ly"},
+    {"display": "⭐ Thiện Minh — Nam · Bắc · Phong cách kể chuyện", "name": "Thiện Minh"},
+    {"display": "⭐ Mai Anh — Nữ · Bắc · Phong cách tin tức", "name": "Mai Anh"},
+    {"display": "⭐ Hải Đăng — Nam · Bắc · Phong cách tự nhiên", "name": "Hải Đăng"},
+    {"display": "⭐ Thùy Dung — Nữ · Nam · Phong cách tin tức", "name": "Thùy Dung"},
+    {"display": "⭐ Thiền Tâm Đức — Nam · Bắc · Phong cách kể chuyện", "name": "Thiền Tâm Đức"},
+    {"display": "⭐ Ngọc Huyền — Nữ · Bắc · Giọng đọc tự nhiên", "name": "Ngọc Huyền"},
+    {"display": "⭐ Quang Sơn — Nam · Trung · Phong cách tự nhiên", "name": "Quang Sơn"},
+    {"display": "⭐ Ngọc Trân — Nữ · Trung · Phong cách tự nhiên", "name": "Ngọc Trân"},
+    {"display": "Minh Đức — Nam · Bắc · Phong cách tin tức", "name": "Minh Đức"},
+    {"display": "Phạm Tuyên — Nam · Bắc · Phong cách tự nhiên", "name": "Phạm Tuyên"},
+    {"display": "Thái Sơn — Nam · Nam · Phong cách kể chuyện", "name": "Thái Sơn"},
+    {"display": "Xuân Vĩnh — Nam · Bắc · Phong cách tự nhiên", "name": "Xuân Vĩnh"},
+    {"display": "Thanh Bình — Nam · Bắc · Phong cách kể chuyện", "name": "Thanh Bình"},
+    {"display": "Ngọc Linh — Nữ · Bắc · Phong cách kể chuyện", "name": "Ngọc Linh"},
+    {"display": "Đoan Trang — Nữ · Bắc · Phong cách tự nhiên", "name": "Đoan Trang"},
+    {"display": "Thục Đoan — Nữ · Nam · Phong cách kể chuyện", "name": "Thục Đoan"},
+    {"display": "Minh Triết — Nam · Nam · Phong cách tin tức", "name": "Minh Triết"},
+    {"display": "Mỹ Duyên — Nữ · Nam · Phong cách đọc truyện", "name": "Mỹ Duyên"},
+    {"display": "Quỳnh Anh — Nữ · Bắc · Phong cách đọc truyện", "name": "Quỳnh Anh"},
+    {"display": "Đức Trí — Nam · Nam · Phong cách đọc truyện", "name": "Đức Trí"},
+    {"display": "Kim Thanh — Nữ · Nam · Phong cách đọc truyện", "name": "Kim Thanh"},
+    {"display": "Adam — Nam · Nam · Giọng đọc tự nhiên", "name": "Adam"},
+    {"display": "Quốc Tuấn — Nam · Bắc · Phong cách tự nhiên", "name": "Quốc Tuấn"},
 ]
 
 VOICE_MAP = {v["display"]: v["name"] for v in ALL_PRESET_VOICES}
@@ -141,9 +152,9 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
         if not preset_voice_display or "Không tìm thấy" in preset_voice_display:
             return None, "⚠️ **Vui lòng chọn một giọng đọc hợp lệ trong danh sách!**"
         
-        actual_voice_name = VOICE_MAP.get(preset_voice_display, preset_voice_display.split(" — ")[0].strip())
-        if actual_voice_name in ["Adam bựa", "Adam"]:
-            actual_voice_name = "Adam"
+        actual_voice_name = VOICE_MAP.get(preset_voice_display)
+        if not actual_voice_name:
+            actual_voice_name = preset_voice_display.split(" — ")[0].replace("⭐", "").strip()
             
         progress(0.4, desc=f"🎙️ Đang tổng hợp giọng {actual_voice_name}...")
         print(f"🎙️ Đang tổng hợp giọng: {actual_voice_name} ({preset_voice_display})", flush=True)
@@ -427,7 +438,7 @@ theme = gr.themes.Soft(
     neutral_hue="slate"
 )
 
-with gr.Blocks(title="VietNeu Voice Studio", head=custom_head_html) as demo:
+with gr.Blocks(title="VietNeu Voice Studio") as demo:
     with gr.Column(elem_classes=["container"]):
         gr.Markdown(
             """
@@ -661,22 +672,28 @@ if __name__ == "__main__":
             print(f"Lỗi nạp nền: {e}", flush=True)
     threading.Thread(target=prewarm_in_background, daemon=True).start()
 
-    launch_res = demo.queue().launch(
+    local_ip = get_local_ip()
+    wifi_url = f"http://{local_ip}:{port}"
+
+    def log_urls_after_start():
+        time.sleep(2)
+        share_url = getattr(demo, "share_url", None)
+        url_file = os.path.join(BASE_DIR, "urls.txt")
+        try:
+            with open(url_file, "w", encoding="utf-8") as f:
+                f.write(f"LOCAL=http://127.0.0.1:{port}\nWIFI={wifi_url}\nSHARE={share_url}\n")
+        except Exception:
+            pass
+        print(f"\n=========================================\n🚀 LOCALHOST: http://127.0.0.1:{port}\n📱 WI-FI LAN (cùng mạng): {wifi_url}\n🌐 IPHONE TỪ XA (4G/Wifi): {share_url}\n=========================================\n", flush=True)
+
+    threading.Thread(target=log_urls_after_start, daemon=True).start()
+
+    demo.queue().launch(
         share=not is_render,
         server_name="0.0.0.0",
         server_port=port,
         theme=theme,
         css=custom_css,
+        head=custom_head_html,
         allowed_paths=[VOICES_DIR, OUTPUTS_DIR],
     )
-    
-    local_ip = get_local_ip()
-    wifi_url = f"http://{local_ip}:{port}"
-    share_url = getattr(demo, "share_url", None)
-    if not share_url and isinstance(launch_res, tuple) and len(launch_res) > 2:
-        share_url = launch_res[2]
-
-    url_file = os.path.join(BASE_DIR, "urls.txt")
-    with open(url_file, "w", encoding="utf-8") as f:
-        f.write(f"LOCAL=http://127.0.0.1:{port}\nWIFI={wifi_url}\nSHARE={share_url}\n")
-    print(f"\n=========================================\n🚀 LOCALHOST: http://127.0.0.1:{port}\n📱 WI-FI LAN: {wifi_url}\n🌐 PUBLIC SHARE: {share_url}\n=========================================\n", flush=True)

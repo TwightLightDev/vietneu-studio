@@ -5,3 +5,5 @@ urls.txt
 .env
 venv/
 .venv/
+outputs/
+
