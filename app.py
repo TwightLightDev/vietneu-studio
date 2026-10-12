@@ -41,8 +41,8 @@ ADAM_BUA_WAV = os.path.join(VOICES_DIR, "adam_bua.wav")
 def register_custom_voices(tts_instance):
     if os.path.exists(ADAM_BUA_WAV):
         try:
-            tts_instance.add_voice("Adam bựa", ref_audio=ADAM_BUA_WAV, denoise=True, save=False)
-            print("🎙️ Đã thay thế thành công giọng 'Adam bựa' bằng file %5Bexcited%5D.mp3!", flush=True)
+            tts_instance.add_voice("Adam bựa", ref_audio=ADAM_BUA_WAV, denoise=False, use_ref_codes=True, save=False)
+            print("🎙️ Đã nạp thành công giọng 'Adam bựa' chuẩn gốc (denoise=False)!", flush=True)
         except Exception as e:
             print(f"⚠️ Lỗi thay thế giọng Adam bựa: {e}", flush=True)
 
@@ -69,7 +69,7 @@ def get_tts():
 
 # Danh sách đầy đủ 25 giọng chuẩn chính xác của VieNeu-TTS-v3-Turbo
 ALL_PRESET_VOICES = [
-    {"display": "⭐ Adam bựa (Giọng chuẩn %5Bexcited%5D) — Nam · Bắc", "name": "Adam bựa"},
+    {"display": "⭐ Adam bựa — Nam · Bắc · Phong cách tự nhiên", "name": "Adam bựa"},
     {"display": "⭐ Trúc Ly — Nữ · Bắc · Phong cách tự nhiên", "name": "Trúc Ly"},
     {"display": "⭐ Thiện Minh — Nam · Bắc · Phong cách kể chuyện", "name": "Thiện Minh"},
     {"display": "⭐ Mai Anh — Nữ · Bắc · Phong cách tin tức", "name": "Mai Anh"},
@@ -171,15 +171,22 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
             
         print(f"🎙️ Đang tổng hợp giọng: {actual_voice_name} ({preset_voice_display})", flush=True)
         try:
-            audio = engine.infer(text, voice=actual_voice_name, temperature=float(temperature))
+            audio = engine.infer(
+                text,
+                voice=actual_voice_name,
+                temperature=float(temperature),
+                top_k=15,
+                top_p=0.80,
+                repetition_penalty=1.3,
+                denoise=False,
+                use_ref_codes=True,
+                apply_watermark=False,
+            )
         except Exception as e:
             print(f"❌ Lỗi tổng hợp giọng: {e}", flush=True)
             return None, f"❌ **Lỗi khi tạo giọng:** {e}"
             
-        if actual_voice_name == "Adam bựa":
-            info_source = "Giọng **Adam bựa** *(đã thay bằng file %5Bexcited%5D.mp3 của bạn)*"
-        else:
-            info_source = f"Giọng chuẩn VieNeu: **{actual_voice_name}**"
+        info_source = f"Giọng: **{actual_voice_name}**"
     else:
         if not custom_voice_file or "Chưa có file" in custom_voice_file:
             return None, "⚠️ **Chưa có file âm thanh mẫu nào trong thư mục 'voices/'!**"
@@ -190,7 +197,17 @@ def process_tts(text, mode, preset_voice_display, custom_voice_file, temperature
 
         print(f"🎙️ Đang clone chất giọng từ file: {ref_path}", flush=True)
         try:
-            audio = engine.infer(text, ref_audio=ref_path, temperature=float(temperature))
+            audio = engine.infer(
+                text,
+                ref_audio=ref_path,
+                temperature=float(temperature),
+                top_k=15,
+                top_p=0.80,
+                repetition_penalty=1.3,
+                denoise=False,
+                use_ref_codes=True,
+                apply_watermark=False,
+            )
         except Exception as e:
             print(f"❌ Lỗi clone giọng: {e}", flush=True)
             return None, f"❌ **Lỗi khi clone giọng từ file:** {e}"
@@ -630,11 +647,11 @@ with gr.Blocks(title="VietNeu Voice Studio") as demo:
         # Tuỳ chọn nâng cao (thu gọn mặc định)
         with gr.Accordion("⚙️ Cài đặt nâng cao (Tuỳ chọn)", open=False):
             temperature_slider = gr.Slider(
-                minimum=0.1,
-                maximum=1.5,
-                value=0.8,
+                minimum=0.05,
+                maximum=0.8,
+                value=0.15,
                 step=0.05,
-                label="Độ biểu cảm (Temperature) - Mặc định 0.8",
+                label="Độ bám giọng gốc (Temperature: 0.15 - càng thấp càng bám sát 99% file mẫu)",
             )
 
     # ── Xử lý sự kiện tương tác ──────────────────────────────────────────────
